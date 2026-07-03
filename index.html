@@ -308,6 +308,7 @@ footer.site b{color:var(--ink-2)}
               <option value="SC">SC</option>
               <option value="ST">ST</option>
               <option value="PWD">PwBD / PWD</option>
+              <option value="WARD">Ward quota (BHU employee ward)</option>
             </select>
           </div>
           <div class="field">
@@ -351,6 +352,10 @@ footer.site b{color:var(--ink-2)}
             Predict my programmes
           </button>
           <button class="btn btn-ghost" id="btnReset">Reset</button>
+          <button class="btn btn-ghost" id="btnExportDB" title="Download every programme × college × category last-round closing score as an Excel file">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export all cut-offs (Excel)
+          </button>
         </div>
       </div>
     </div>
@@ -388,6 +393,7 @@ footer.site b{color:var(--ink-2)}
               <option value="SC">SC</option>
               <option value="ST">ST</option>
               <option value="PWD">PwBD / PWD</option>
+              <option value="WARD">Ward quota (BHU employee ward)</option>
             </select>
           </div>
           <div class="field">
@@ -637,6 +643,10 @@ function render(){
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="resSearch" type="text" placeholder="Search programme or college…" value="${SEARCH.replace(/"/g,'&quot;')}">
     </div>
+    <button class="btn btn-primary" id="btnExportRes" style="padding:9px 16px;font-size:.86rem" title="Download the matches shown for your profile as an Excel file">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export to Excel
+    </button>
   </div>`);
 
   html.push('<div class="res-list">');
@@ -684,6 +694,7 @@ function render(){
   if(sb){sb.addEventListener('input',e=>{SEARCH=e.target.value;SHOWN=PAGE;render();
     const v=sb.value;sb.focus();sb.setSelectionRange(v.length,v.length);});}
   const mb=$('#moreBtn'); if(mb)mb.addEventListener('click',()=>{SHOWN+=PAGE;render();});
+  const eb=$('#btnExportRes'); if(eb)eb.addEventListener('click',()=>exportResults(list));
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -840,6 +851,92 @@ $('#btnChanceReset').addEventListener('click',()=>{
   $('#cPct').value='';$('#cAge').value='';$('#cCat').value='GEN';$('#cGender').value='M';$('#cMath').value='1';
   $('#chanceResult').innerHTML='';
 });
+
+/* ===================== EXCEL EXPORT (dependency-free .xlsx) ===================== */
+/* Builds a real .xlsx (a ZIP of XML parts, stored uncompressed) entirely in-browser,
+   so export works offline with no external library. */
+const XLSXMini=(function(){
+  const T=(function(){const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
+  function crc32(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=T[(c^b[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+  const enc=new TextEncoder();
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function colRef(n){let s='';n++;while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=(n-m-1)/26;}return s;}
+  function sheetXml(rows){
+    let x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+    rows.forEach((row,ri)=>{
+      x+='<row r="'+(ri+1)+'">';
+      row.forEach((cell,ci)=>{
+        const ref=colRef(ci)+(ri+1);
+        if(cell===null||cell===undefined||cell==='') return;
+        if(typeof cell==='number'&&isFinite(cell)) x+='<c r="'+ref+'"><v>'+cell+'</v></c>';
+        else x+='<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+esc(cell)+'</t></is></c>';
+      });
+      x+='</row>';
+    });
+    return x+'</sheetData></worksheet>';
+  }
+  function build(rows,sheetName){
+    const files=[
+      ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+      ['_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="'+esc((sheetName||'Data').slice(0,31))+'" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+      ['xl/worksheets/sheet1.xml',sheetXml(rows)]
+    ];
+    const u16=n=>[n&0xFF,(n>>>8)&0xFF];
+    const u32=n=>[n&0xFF,(n>>>8)&0xFF,(n>>>16)&0xFF,(n>>>24)&0xFF];
+    const chunks=[],central=[];let offset=0;
+    files.forEach(([name,content])=>{
+      const nameB=enc.encode(name),dataB=enc.encode(content),crc=crc32(dataB);
+      const local=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+      chunks.push(new Uint8Array(local),nameB,dataB);
+      const cen=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
+      central.push(new Uint8Array(cen),nameB);
+      offset+=local.length+nameB.length+dataB.length;
+    });
+    let cenSize=0;central.forEach(c=>cenSize+=c.length);
+    const end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(cenSize),u32(offset),u16(0)));
+    const all=chunks.concat(central,[end]);
+    let total=0;all.forEach(a=>total+=a.length);
+    const out=new Uint8Array(total);let p=0;all.forEach(a=>{out.set(a,p);p+=a.length;});
+    return out;
+  }
+  function download(rows,filename,sheetName){
+    const blob=new Blob([build(rows,sheetName)],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1200);
+  }
+  return {download};
+})();
+
+// Export the matched programmes shown for the applicant's profile
+function exportResults(list){
+  const rows=(list&&list.length)?list:RESULTS;
+  if(!rows||!rows.length){alert('Run a prediction first — there are no results to export.');return;}
+  const myCat=CAT_NAME[$('#inCat').value]||$('#inCat').value;
+  const header=['Programme','Faculty / College','Seat category','Your category','Closing score (last round)','Your merit','Margin','Verdict','Counselling round','Merit scale','Required CUET subjects','Class 12 requirement'];
+  const out=[header];
+  rows.forEach(r=>out.push([
+    r.prog.n, r.college, CAT_NAME[r.rcat]||r.rcat, myCat,
+    +r.cut.toFixed(1), +r.merit.toFixed(1), +r.diff.toFixed(1),
+    r.label.charAt(0).toUpperCase()+r.label.slice(1),
+    DATA.rounds[r.round], '/'+r.scale, r.g.combo, r.g.c12
+  ]));
+  XLSXMini.download(out,'BHU_predicted_programmes_'+$('#inCat').value+'.xlsx','My matches');
+}
+
+// Export the full last-round closing score for every programme × college × category
+function exportDatabase(){
+  const header=['Programme','Faculty / College','Category','Last closing score','Counselling round'];
+  const out=[header];
+  DATA.records.slice()
+    .sort((a,b)=> a[0]-b[0] || a[1]-b[1] || String(a[2]).localeCompare(String(b[2])))
+    .forEach(([pi,ci,cat,cut,rd])=>out.push([DATA.programs[pi].n, DATA.colleges[ci], CAT_NAME[cat]||cat, +cut.toFixed(1), DATA.rounds[rd]]));
+  XLSXMini.download(out,'BHU_all_closing_scores_by_category.xlsx','All cut-offs');
+}
+$('#btnExportDB').addEventListener('click',exportDatabase);
 
 /* ===================== ACTIONS ===================== */
 $('#btnPredict').addEventListener('click',()=>{
